@@ -1,0 +1,11 @@
+{
+  "name": "andylau task board",
+  "install": "npm install",
+  "terminals": [
+    {
+      "name": "dev-server",
+      "command": "npm start"
+    }
+  ],
+  "ports": [3000]
+}
