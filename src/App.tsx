@@ -1,191 +1,108 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { BoardView } from './components/BoardView.tsx'
+import { type ViewId } from './components/Chrome.tsx'
+import { ForecastView } from './components/ForecastView.tsx'
+import { useSnapshot } from './lib/useSnapshot.ts'
 
-const WORK = [
-  {
-    year: '2025',
-    title: '个人工具集',
-    desc: '把日常高频操作收成一组小而快的网页工具，注重键盘流与可读性。',
-    meta: 'React · Vite',
-  },
-  {
-    year: '2024',
-    title: '接口观测面板',
-    desc: '为小团队接口链路做轻量监控与告警摘要，减少翻日志的时间。',
-    meta: 'TypeScript · Node',
-  },
-  {
-    year: '2023',
-    title: '内容站点改造',
-    desc: '重做信息架构与排版节奏，让长文阅读更顺、加载更轻。',
-    meta: '前端工程',
-  },
-] as const
+function useNow() {
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+  return now
+}
 
-function useReveal() {
-  const rootRef = useRef<HTMLDivElement>(null)
+function useWide() {
+  const query = '(min-width: 1180px)'
+  const [wide, setWide] = useState(() => window.matchMedia(query).matches)
+  useEffect(() => {
+    const media = window.matchMedia(query)
+    const onChange = () => setWide(media.matches)
+    media.addEventListener('change', onChange)
+    return () => media.removeEventListener('change', onChange)
+  }, [])
+  return wide
+}
+
+function Stage({ children }: { children: ReactNode }) {
+  const frame = useRef<HTMLDivElement>(null)
+  const [scale, setScale] = useState(1)
 
   useEffect(() => {
-    const root = rootRef.current
-    if (!root) return
-
-    const nodes = root.querySelectorAll<HTMLElement>('.reveal')
-    if (!nodes.length) return
-
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      nodes.forEach((node) => node.classList.add('is-visible'))
-      return
+    const node = frame.current
+    if (!node) return
+    const fit = () => {
+      const next = Math.min(node.clientWidth / 1920, node.clientHeight / 1080)
+      setScale(next > 0 ? next : 1)
     }
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            entry.target.classList.add('is-visible')
-            observer.unobserve(entry.target)
-          }
-        }
-      },
-      { threshold: 0.16, rootMargin: '0px 0px -8% 0px' },
-    )
-
-    nodes.forEach((node) => observer.observe(node))
+    fit()
+    const observer = new ResizeObserver(fit)
+    observer.observe(node)
     return () => observer.disconnect()
   }, [])
 
-  return rootRef
+  return (
+    <div className="stage-viewport" ref={frame}>
+      <div className="stage-scale" style={{ transform: `scale(${scale})` }}>
+        {children}
+      </div>
+    </div>
+  )
 }
 
 export default function App() {
-  const rootRef = useReveal()
+  const { snap, error, refreshing, refresh } = useSnapshot()
+  const now = useNow()
+  const wide = useWide()
+  const [view, setView] = useState<ViewId>(() => {
+    const value = new URLSearchParams(window.location.search).get('view')
+    if (value === 'senate' || value === 'house' || value === 'governor' || value === 'board') return value
+    return 'board'
+  })
 
-  return (
-    <div className="site" ref={rootRef}>
-      <header className="hero" id="top">
-        <nav className="nav" aria-label="主导航">
-          <a className="nav__mark" href="#top">
-            Andy Lau
-          </a>
-          <ul className="nav__links">
-            <li>
-              <a href="#about">关于</a>
-            </li>
-            <li>
-              <a href="#work">作品</a>
-            </li>
-            <li>
-              <a href="#contact">联系</a>
-            </li>
-          </ul>
-        </nav>
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    if (view === 'board') url.searchParams.delete('view')
+    else url.searchParams.set('view', view)
+    window.history.replaceState(null, '', url)
+  }, [view])
 
-        <div className="hero__media" aria-hidden="true">
-          <img
-            src="https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=2400&q=80"
-            alt=""
-            width={2400}
-            height={1600}
-            fetchPriority="high"
-          />
-        </div>
-        <div className="hero__veil" aria-hidden="true" />
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target
+      if (target instanceof HTMLElement && target.closest('input, select, textarea')) return
+      const next: Record<string, ViewId> = { '1': 'board', '2': 'senate', '3': 'house', '4': 'governor' }
+      if (next[event.key]) setView(next[event.key])
+      if (event.key === 'r' || event.key === 'R') void refresh()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [refresh])
 
-        <div className="hero__content">
-          <p className="hero__brand">Andy Lau</p>
-          <h1 className="hero__headline">用代码把想法做成产品</h1>
-          <p className="hero__lede">
-            独立开发者，关注体验细节与可维护的工程实现。
-          </p>
-          <div className="hero__actions">
-            <a className="btn btn--primary" href="#work">
-              看看作品
-            </a>
-            <a className="btn btn--ghost" href="#contact">
-              联系我
-            </a>
-          </div>
-        </div>
-      </header>
+  const screen =
+    view === 'board' ? (
+      <BoardView
+        snap={snap}
+        now={now}
+        refreshing={refreshing}
+        error={error}
+        fixed={wide}
+        onRefresh={() => void refresh()}
+        onView={setView}
+      />
+    ) : (
+      <ForecastView
+        view={view}
+        snap={snap}
+        now={now}
+        refreshing={refreshing}
+        error={error}
+        fixed={wide}
+        onRefresh={() => void refresh()}
+        onView={setView}
+      />
+    )
 
-      <main>
-        <section className="section section--about" id="about">
-          <div className="about__visual reveal">
-            <img
-              src="https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=1400&q=80"
-              alt="工作台上的笔记本与笔记"
-              width={1400}
-              height={933}
-              loading="lazy"
-            />
-          </div>
-          <div className="about__copy reveal">
-            <p className="section__label">About</p>
-            <h2 className="section__title">把复杂问题拆成清晰路径</h2>
-            <p className="section__text">
-              我喜欢从真实使用场景出发：先想清楚谁在用、哪里卡住，再落成界面与代码。
-              日常在前端、小型全栈与工具型产品之间切换，追求干净的交互和经得起改的结构。
-            </p>
-          </div>
-        </section>
-
-        <section className="section" id="work">
-          <div className="reveal">
-            <p className="section__label">Selected work</p>
-            <h2 className="section__title">最近在做的事</h2>
-            <p className="section__text">
-              精选几段近期实践。内容可按你的真实项目随时替换。
-            </p>
-          </div>
-
-          <ul className="work-list">
-            {WORK.map((item, index) => (
-              <li
-                className="work-item reveal"
-                key={item.title}
-                style={{ transitionDelay: `${index * 70}ms` }}
-              >
-                <span className="work-item__year">{item.year}</span>
-                <div>
-                  <h3 className="work-item__title">{item.title}</h3>
-                  <p className="work-item__desc">{item.desc}</p>
-                </div>
-                <span className="work-item__meta">{item.meta}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-
-        <section className="section section--contact" id="contact">
-          <div className="reveal">
-            <p className="section__label">Contact</p>
-            <h2 className="section__title">有想法？一起聊聊</h2>
-          </div>
-          <div className="contact-panel reveal">
-            <p>
-              合作、咨询或随便打个招呼都可以。把你的邮件或 GitHub 换成自己的联系方式即可上线。
-            </p>
-            <div className="contact-panel__actions">
-              <a className="btn btn--ink" href="mailto:hello@andylau.dev">
-                发邮件
-              </a>
-              <a
-                className="btn btn--outline"
-                href="https://github.com/andysniper911-cpu"
-                target="_blank"
-                rel="noreferrer"
-              >
-                GitHub
-              </a>
-            </div>
-          </div>
-        </section>
-      </main>
-
-      <footer className="footer">
-        <span>
-          <strong>Andy Lau</strong> · Personal site
-        </span>
-        <span>© {new Date().getFullYear()}</span>
-      </footer>
-    </div>
-  )
+  return <div className={wide ? 'shell' : 'shell is-scroll'}>{wide ? <Stage>{screen}</Stage> : screen}</div>
 }
